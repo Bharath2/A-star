@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+
+import rospy
+from bot_controller import BotController
+
+import numpy as np
+from maputils import *
+from nodeclass import *
+from planner import Planner
+
+
+def main():
+    rospy.init_node('task_manager')
+    rospy.loginfo('Press Ctrl c to exit')
+
+    scale = 50
+    map_size = (10, 10)
+    obstacles =  [
+                    Circle(center = (2, 2), radius = 1),
+                    Circle(center = (2, 8), radius = 1),
+                    Polygon(verts = np.array([[0.25, 5.75], [1.75, 5.75], [1.75, 4.25], [0.25, 4.25]],)),
+                    Polygon(verts = np.array([[3.75, 5.75], [6.25, 5.75], [6.25, 4.25], [3.75, 4.25]],)),
+                    Polygon(verts = np.array([[7.25, 4], [8.75, 4], [8.75, 2], [7.25, 2]],)),
+                ]
+
+    rpm1, rpm2 = 25, 50
+    clearance = 0.1
+    start_pos = 50, 50, 0
+    goal_pos = 9*50, 9*50, 0
+
+    robot = Robot(rpm1, rpm2, scale = scale)
+    map = Map(map_size, obstacles, clearance + robot.radius, scale)
+
+    print('\nMap Created')
+
+    # euclidean distance as heuristic
+    hv = lambda pos: 2*dist(pos, goal_pos)
+    #start and goal nodes
+    start_node = Node(start_pos, None, (0, 0), 0, hv(start_pos))
+    goal_node  = Node( goal_pos, None, None, 0, 0)
+    # initialise dijsktra search with map and a start position
+    A_star = Planner(robot,map, start_node, hv)
+    # search for a path to goal position
+    path = A_star.search(goal_node)
+
+    print('\n path found')
+    print('\nwaiting to publish')
+
+    rospy.sleep(10)
+
+    print('\n publishing')
+    botcontroller = BotController()
+    botcontroller.wait()
+    rate = rospy.Rate(1)
+
+    for node in path[1:]:
+        UL, UR = node.action
+        v, w = robot.rpm_vels(UL, UR)
+        
+        x, y, theta = node.parent.pose
+        xn, yn, yaw = botcontroller.get_transform()
+        yaw = (yaw)*180/np.pi
+
+        diff = ((theta - yaw) + 180) % 360 - 180
+        botcontroller.cmd_vel(v/scale, -w + 0.02*diff)
+        rate.sleep()
+
+    botcontroller.cmd_vel(0, 0)
+
+
+if __name__ == '__main__':
+    try: main()
+    except rospy.ROSInterruptException:
+        rospy.loginfo("Task terminated.")
+
+    
